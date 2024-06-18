@@ -1,0 +1,45 @@
+server:
+  port: 7777
+spring:
+  application:
+    name: springbootAddRedis
+  datasource:    # mysql配置
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/my_db
+    username: root
+    password: 123456
+  mvc:  # swagger配置
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  # Redis配置
+  redis:
+    database: 0  # redis数据库索引（默认为0）
+    host: localhost # redis服务器主机名
+    port: 6379 # redis服务器端口
+    password:
+    lettuce:  # Lettuce连接池配置
+      pool:
+        max-active: 8 # 最大活跃连接数
+        max-wait: -1ms # 最大等待时间 （-1表示无线等待）
+        max-idle: 8 # 最大空闲连接数
+        min-idle: 0 # 最小空闲连接数
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false  # 是否将下划线转换为驼峰式命名
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # MyBatis日志实现类
+  global-config:
+    db-config:
+      logic-delete-field: isDelete # 逻辑删除字段名(since 3.3.0,配置后可以忽略不配置步骤2)
+      logic-delete-value: 1 # 逻辑删除名
+      logic-not-delete-value: 0 # 逻辑未删除名
+logging:
+  level:
+    root: info # 跟日志记录级别
+    com:
+      augus: info # 指定包的日志记录级别
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger- %msg%n"  # 控制台日志输出格式
+  file:
+    name: C:\Users\a7249\Desktop\my-code-note-for-java\springbootAddRedis\logs\logs.log
+    pattern: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger- %msg%n" # 日志文件输出格式

@@ -1,4 +1,4 @@
-package com.example.springboot.config;
+package com.augus.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,12 +27,12 @@ public class Knife4jConfig {
         return new Docket(DocumentationType.SWAGGER_2)
                 .apiInfo(new ApiInfoBuilder()
                         .title("接口文档")
-                        .description("springboot-swagger")
+                        .description("springbootAddRedis-swagger")
                         .version("1.0")
                         .build())
                 .select()
                 // 指定 Controller 扫描包路径
-                .apis(RequestHandlerSelectors.basePackage("com.example.springboot.controller"))
+                .apis(RequestHandlerSelectors.basePackage("com.augus.controller"))
                 .paths(PathSelectors.any())
                 .build();
     }
