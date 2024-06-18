@@ -5,7 +5,7 @@ import java.util.List;
 public class Solution {
 
     public static void main(String[] args) {
-        int[] nums = {5, 14, 3, 1, 2};
+        int[] nums = {3,7,9,10,3,7,1,8,3,4};
         Solution solution = new Solution();
         int[] ints = solution.resultArray(nums);
         for(int i = 0 ; i < 5; i ++){
