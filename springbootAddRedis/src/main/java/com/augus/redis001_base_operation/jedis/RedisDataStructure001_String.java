@@ -14,7 +14,7 @@ public class RedisDataStructure001_String {
 
         // 1.增加string k v
         jedis.set("k1", "v1");
-//        jedis.setnx("k1', "v222")  如果存在k1，则不改变value
+        jedis.setnx("k1", "v2");  // 如果存在k1，则不改变value
 
 
         // 2.设置 k2:v2 过期时间为10s

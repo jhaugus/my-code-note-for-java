@@ -14,6 +14,7 @@
         <module>springboot</module>
         <module>springbootAddRedis</module>
         <module>springbootAddRabbitMQ</module>
+        <module>springbootAddRedisAndCanal</module>
     </modules>
 
     <properties>
