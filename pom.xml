@@ -15,6 +15,10 @@
         <module>springbootAddRedis</module>
         <module>springbootAddRabbitMQ</module>
         <module>springbootAddRedisAndCanal</module>
+        <module>spring</module>
+        <module>Test</module>
+        <module>javaee</module>
+        <module>lottery</module>
     </modules>
 
     <properties>
