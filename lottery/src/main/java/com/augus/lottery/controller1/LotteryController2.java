@@ -1,12 +1,12 @@
 package com.augus.lottery.controller1;
 
 import com.augus.controller.*;
+import com.augus.controller2.CacheMgr;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -21,10 +21,26 @@ import java.util.Calendar;
 import java.util.Date;
 
 @Slf4j
-@Controller("/lottery1")
-public class LotteryController1 {
-    @PostMapping(value = "/v1/get_lucky", consumes = "application/json; charset=utf-8")
-    public ResponseEntity<LotteryResult> lotteryV1(@RequestHeader("X-User-Id") Long tokenUserID, @RequestBody LotteryReq req) {
+@Controller("/lottery2")
+public class LotteryController2 {
+
+    @Resource
+    private BlackUserMapper blackUserMapper;
+    @Resource
+    private BlackIpMapper blackIpMapper;
+    @Resource
+    private CouponMapper couponMapper;
+    @Resource
+    private LotteryTimesMapper lotteryTimesMapper;
+    @Resource
+    private PrizeMapper prizeMapper;
+    @Resource
+    private ResultMapper resultMapper;
+
+
+
+    @PostMapping(value = "/v2/get_lucky", consumes = "application/json; charset=utf-8")
+    public ResponseEntity<LotteryResult> lotteryV2(@RequestHeader("X-User-Id") Long tokenUserID, @RequestBody LotteryReq req) {
         LotteryResult lotteryResult = null;
         try {
             Long userID = null;
@@ -35,9 +51,7 @@ public class LotteryController1 {
             }
             String userName = req.userName;
             String ip = req.ip;
-            // TODO 业务代码
             lotteryResult = lottery(userID, userName, ip);
-
         } catch (Exception e) {
             System.out.println("lottery err " + e.getMessage());
             return ResponseEntity.fail();
@@ -50,7 +64,7 @@ public class LotteryController1 {
     public LotteryResult lottery(Long userID, String userName, String ip) throws ParseException {
         LotteryResult lotteryResult = new LotteryResult();
         lotteryResult.setUserId(userID);
-        String lockKey = String.format(Constants.lotteryLockKeyPrefix+"%d", userID); // lottery_lock + id
+        String lockKey = String.format(Constants.lotteryLockKeyPrefix+"%d", userID);
         RLock lock = redissonClient.getLock(lockKey);
         /*
          ******** 抽奖逻辑*******
@@ -58,8 +72,7 @@ public class LotteryController1 {
         if (lock.tryLock()) {
             log.info("get lock success!!!!!!!!");
             try {
-                // TODO 上锁 同一个用户同一个时刻只能进行一次抽奖
-                getLuckyV1(lotteryResult, userID, userName,ip);
+                getLuckyV2(lotteryResult, userID, userName,ip);
             }finally {
                 lock.unlock();
             }
@@ -67,22 +80,18 @@ public class LotteryController1 {
         return lotteryResult;
     }
 
-    @Transactional
-    public void getLuckyV1(LotteryResult lotteryResult,Long userID, String userName, String ip){
-        //   TODO ******** 抽奖逻辑*******
+    public void getLuckyV2(LotteryResult lotteryResult,Long userID, String userName, String ip) throws ParseException {
+        /*
+         ******** 抽奖逻辑*******
+         */
         CheckResult checkResult = new CheckResult();
-        // 1. 验证用户今日抽奖次数：
-        // 1.1 次数大于最大次数：false
-        // 1.2 次数小于最大次数: true
-        // 1.2.1 第一次抽将用户插入t_lottery_time，次数设为1
-        // 1.2.2 之前抽过，在数据库中，次数+1
-        if (!checkUserDayLotteryTimes(userID)) {
+        // 1. 验证用户今日抽奖次数
+        if (!checkUserDayLotteryTimesWithCache(userID)) {
             log.info("lotteryV1|CheckUserDayLotteryTimes failed，user_id：{}", userID);
             lotteryResult.setErrcode(ErrorCode.ERR_USER_LIMIT_INVALID);
             return;
         }
-
-        // 2. 验证当天IP参与的抽奖次数：同上步骤
+        // 2. 验证当天IP参与的抽奖次数
         if (!checkIpLimit(ip)) {
             log.info("lotteryV1|checkIpLimit failed，ip：{}", ip);
             lotteryResult.setErrcode(ErrorCode.ERR_IP_LIMIT_INVALID);
@@ -91,7 +100,7 @@ public class LotteryController1 {
         Date now = new Date();
 
         // 3. 验证IP是否在ip黑名单
-        CheckResult ipCheckResult = checkBlackIp(now,ip);
+        CheckResult ipCheckResult = checkBlackIpWithCache(now,ip);
         checkResult.setBlackIp(ipCheckResult.getBlackIp());
         if (!ipCheckResult.isOk()) {
             log.info("lotteryV1|checkBlackIp failed，ip：{}", ip);
@@ -100,7 +109,7 @@ public class LotteryController1 {
         }
 
         // 4. 验证用户是否在用户黑名单
-        CheckResult userCheckResult = checkBlackUser(now,userID);
+        CheckResult userCheckResult = checkBlackUserWithCache(now,userID);
         checkResult.setBlackUser(userCheckResult.getBlackUser());
         if (!userCheckResult.isOk()) {
             log.info("lotteryV1|checkBlackUser failed，user_id：{}", userID);
@@ -112,12 +121,13 @@ public class LotteryController1 {
         // 5. 奖品匹配
         int prizeCode = UtilTools.getRandom(Constants.prizeCodeMax);
         log.info("lotteryV1|prizeCode===={}", prizeCode);
-        LotteryPrizeInfo prize = getPrize(now,prizeCode);
+        LotteryPrizeInfo prize = getPrizeWithCache(now,prizeCode);
         if (prize == null)  {
             log.info("lotteryV1|getPrize null");
             lotteryResult.setErrcode(ErrorCode.ERR_NOT_WON);
             return;
         }
+
         if (prize.getPrizeNum() <=0) {
             log.info("lotteryV1|prize_num invalid,prize_id: {}", prize.getId());
             lotteryResult.setErrcode(ErrorCode.ERR_NOT_WON);
@@ -125,7 +135,7 @@ public class LotteryController1 {
         }
 
         // 6. 剩余奖品发放
-        if (!giveOutPrize(prize.getId())) {
+        if (!giveOutPrizeWithCache(prize.getId())) {
             log.info("lotteryV1|prize not enough,prize_id: {}", prize.getId());
             lotteryResult.setErrcode(ErrorCode.ERR_NOT_WON);
             return;
@@ -133,7 +143,7 @@ public class LotteryController1 {
 
         // 7. 发放优惠券
         if (prize.getPrizeType() == Constants.prizeTypeCouponDiff) {
-            String code = prizeCodeDiff(prize.getId());
+            String code = prizeCodeDiffWithCache(prize.getId());
             if (code.isEmpty()) {
                 log.info("lotteryV1|coupon code is empty: prize_id: {}", prize.getId());
                 lotteryResult.setErrcode(ErrorCode.ERR_NOT_WON);
@@ -142,13 +152,10 @@ public class LotteryController1 {
             // 填充优惠券编码
             prize.setCouponCode(code);
         }
-
         lotteryResult.setErrcode(ErrorCode.SUCCESS);
         lotteryResult.setLotteryPrize(prize);
-
         // 8.记录中奖记录
         logLotteryResult(prize,now,userID,ip,userName,prizeCode);
-
         // 9. 大奖黑名单处理
         if (prize.getPrizeType() == Constants.prizeTypeEntityLarge) {
             LotteryUserInfo lotteryUserInfo = new LotteryUserInfo();
@@ -159,36 +166,65 @@ public class LotteryController1 {
         }
     }
 
-    // 1. 验证用户今日抽奖次数：
-    @Resource
-    private LotteryTimesMapper lotteryTimesMapper;
-    public boolean checkUserDayLotteryTimes(Long userId){
-        // 根据用户id和天数，获取t_lottery_time中抽过奖的用户，如果用户还没有抽过奖，则返回空
+
+    @Autowired
+    protected CacheMgr cacheMgr;
+    // 1. 验证用户今日抽奖次数
+    // TODO 增加缓存业务
+    public boolean checkUserDayLotteryTimesWithCache(Long userId){
+        int userLotteryNum = cacheMgr.incrUserDayLotteryNum(userId);
+        log.info("checkUserDayLotteryTimesWithCache|uid={}|userLotteryNum={}", userId, userLotteryNum);
+        if (userLotteryNum > Constants.userPrizeMax) {
+            return false; // 缓存验证没通过，直接返回
+        }
+        // 通过数据库验证，还要在数据库中做一次验证
         LotteryTimes userLotteryTimes = getUserCurrentLotteryTimes(userId);
         if (userLotteryTimes != null) {
-            // 用户抽奖次数大于最大次数，则返回false。
-            // 否则次数+1
+            // 数据库验证今天的抽奖记录已经达到了抽奖次数限制，不能在抽奖
             if (userLotteryTimes.getNum() > Constants.userPrizeMax){
+                // 缓存数据不可靠，不对，需要更新
+                if (userLotteryTimes.getNum() > userLotteryNum) {
+                    if (!cacheMgr.initUserLuckyNum(userId,userLotteryTimes.getNum())){
+                        log.error("checkUserDayLotteryTimesWithCache|initUserLuckyNum error");
+                    }
+                }
                 log.info("checkUserDayLotteryTimes|user_id: {}, lottery times: {}",userId,userLotteryTimes.getNum());
                 return false;
+            }else{
+                int num = userLotteryTimes.getNum() + 1;
+                userLotteryTimes.setNum(num);
+                // 此时次数抽奖次数增加了，需要更新缓存
+                if (userLotteryTimes.getNum() > userLotteryNum) {
+                    // 缓存更新失败
+                    if (!cacheMgr.initUserLuckyNum(userId,userLotteryTimes.getNum())){
+                        log.error("checkUserDayLotteryTimesWithCache|initUserLuckyNum error");
+                        return false;
+                    }
+                }
+                // 更新数据库
+                lotteryTimesMapper.update(userLotteryTimes);
             }
-            lotteryTimesMapper.update(userLotteryTimes);
             return true;
         }
-        // 如果用户没有抽过奖，将用户插入表中
+        // 新增一条抽奖记录
         Calendar calendar = Calendar.getInstance();
         int y = calendar.get(Calendar.YEAR);  // 获取当前年
         int m  = calendar.get(Calendar.MONTH) + 1; // 获取当前月
         int d = calendar.get(Calendar.DATE); // 获取当前日
         String strDay = String.format("%d%02d%02d", y, m, d);
         int day = Integer.parseInt(strDay);
-        LotteryTimes lotteryTimesInfo = new LotteryTimes();
-        lotteryTimesInfo.setUserId(userId);
-        lotteryTimesInfo.setDay(new Long(day));
-        lotteryTimesInfo.setNum(1);
-        lotteryTimesInfo.setSysCreated(calendar.getTime());
-        lotteryTimesInfo.setSysUpdated(calendar.getTime());
-        lotteryTimesMapper.save(lotteryTimesInfo);
+        userLotteryTimes = new LotteryTimes();
+        userLotteryTimes.setUserId(userId);
+        userLotteryTimes.setDay(new Long(day));
+        userLotteryTimes.setNum(1);
+        userLotteryTimes.setSysCreated(calendar.getTime());
+        userLotteryTimes.setSysUpdated(calendar.getTime());
+        lotteryTimesMapper.save(userLotteryTimes);
+        // 同步到缓存
+        if (!cacheMgr.initUserLuckyNum(userId,userLotteryTimes.getNum())){
+            log.error("checkUserDayLotteryTimesWithCache|initUserLuckyNum error");
+            return false;
+        }
         return true;
     }
     public LotteryTimes getUserCurrentLotteryTimes(Long userId) {
@@ -207,39 +243,26 @@ public class LotteryController1 {
     @Resource
     private RedisUtil redisUtil;
     public boolean checkIpLimit(String ipStr) {
-        long ip = ipToLong(ipStr);
-        int i = new Long(ip % Constants.ipFrameSize).intValue(); // 分区
-        String key = String.format(Constants.ipLotteryDayNumPrefix+"%d", i); // ip_lottery_day_num_ + i
-        double ret = redisUtil.hincr(key,ipStr,1); // 如果没有创建，返回1 ； 如果有则value+1，返回
+        long ip = UtilTools.ipToLong(ipStr);
+        int i = new Long(ip % Constants.ipFrameSize).intValue();
+        String key = String.format(Constants.ipLotteryDayNumPrefix+"%d", i);
+        double ret = redisUtil.hincr(key,ipStr,1);
         if ((int)ret > Constants.ipLimitMax) {
             log.info("ip Limit exceeded, ret: {}",(int)ret);
             return false;
         }
         return true;
     }
-    public static long ipToLong(String ipAddress) {
-        String[] ipAddressParts = ipAddress.split("\\.");
-        long result = 0;
-        for (int i = 0; i < ipAddressParts.length; i++) {
-            int part = Integer.parseInt(ipAddressParts[i]);
-            result += part * Math.pow(256, 3 - i);
-        }
-        return result;
-    }
 
     // 3. 验证IP是否在ip黑名单
-    @Resource
-    private BlackIpMapper blackIpMapper;
-    public CheckResult checkBlackIp(Date now,String ipStr) {
+    public CheckResult checkBlackIpWithCache(Date now,String ipStr) throws ParseException {
         CheckResult checkResult = new CheckResult();
-        BlackIp blackIp = blackIpMapper.getByIP(ipStr);
+        BlackIp blackIp = getBLackIpWithCache(ipStr);
         checkResult.setBlackIp(blackIp);
-        // 如果数据库中不存在，或者ip为空，则ip不在黑名单中
-        if (blackIp == null || blackIp.getIp().isEmpty()){
+        if (blackIp == null || !blackIp.getIp().isEmpty()) {
             checkResult.setOk(true);
             return checkResult;
         }
-        // 如果数据库中存在ip，但是ip的黑名单没有过期，则ip在黑名单中
         if (now.before(blackIp.getBlackTime())) {
             checkResult.setOk(false);
             return checkResult;
@@ -247,47 +270,64 @@ public class LotteryController1 {
         checkResult.setOk(true);
         return checkResult;
     }
+    public BlackIp getBLackIpWithCache(String ip) throws ParseException {
+        BlackIp blackIp = cacheMgr.getBlackIpByCache(ip);
+        // 从缓存获取到数据
+        if (blackIp != null) {
+            return blackIp;
+        }
+        // 缓存没有获取到，从db获取
+        blackIp = blackIpMapper.getByIP(ip);
+        cacheMgr.setBlackIpByCache(blackIp);
+        return blackIp;
+    }
 
     // 4. 验证用户是否在用户黑名单
-    @Resource
-    private BlackUserMapper blackUserMapper;
-    public CheckResult checkBlackUser(Date now,Long userId) {
+    public CheckResult checkBlackUserWithCache(Date now,Long userId) throws ParseException {
         CheckResult checkResult = new CheckResult();
-        BlackUser blackUser = blackUserMapper.getByUserId(userId);
+        BlackUser blackUser = getBlackUserWithCache(userId);
         checkResult.setBlackUser(blackUser);
         if (blackUser != null && now.before(blackUser.getBlackTime())) {
             checkResult.setOk(false);
-            return checkResult;
+        }else{
+            checkResult.setOk(true);
         }
-        checkResult.setOk(true);
         return checkResult;
+    }
+    public BlackUser getBlackUserWithCache(Long userId) throws ParseException {
+        BlackUser blackUser = cacheMgr.getBlackUserByCache(userId);
+        if (blackUser != null){
+            return blackUser;
+        }
+        blackUser = blackUserMapper.getByUserId(userId);
+        cacheMgr.setBlackUserByCache(blackUser);
+        return blackUser;
     }
 
     // 5. 奖品匹配
-    public LotteryPrizeInfo getPrize(Date now,int prizeCode){
-        ArrayList<LotteryPrizeInfo> lotteryPrizeInfoList = getAllUsefulPrizes(now);
+    public LotteryPrizeInfo getPrizeWithCache(Date now,int prizeCode) throws ParseException {
+        ArrayList<LotteryPrizeInfo> lotteryPrizeInfoList = getAllUsefulPrizesWithCache(now);
         for (LotteryPrizeInfo lotteryPrizeInfo : lotteryPrizeInfoList) {
             if (lotteryPrizeInfo.getPrizeCodeLow() <= prizeCode && lotteryPrizeInfo.getPrizeCodeHigh() >= prizeCode) {
-                if (lotteryPrizeInfo.getPrizeType() < Constants.prizeTypeEntitySmall){
-                    return lotteryPrizeInfo;
-                }
+                return lotteryPrizeInfo;
             }
         }
         return null;
     }
-    @Resource
-    private PrizeMapper prizeMapper;
-    public ArrayList<LotteryPrizeInfo> getAllUsefulPrizes(Date now) {
+    public ArrayList<LotteryPrizeInfo> getAllUsefulPrizesWithCache(Date now) throws ParseException {
+        ArrayList<Prize> prizeList = getAllUsefulPrizeListWithCache(now);
+        if (prizeList == null || prizeList.isEmpty()) {
+            return null;
+        }
         ArrayList<LotteryPrizeInfo> lotteryPrizeInfoList = new ArrayList<LotteryPrizeInfo>();
-        ArrayList<Prize> prizeList = prizeMapper.getAllUsefulPrizeList(now);
-        for (Prize prize : prizeList) {
+        for (Prize prize : prizeList){
             String[] codes = prize.getPrizeCode().split("-");
             if (codes.length == 2) {
                 String codeA = codes[0];
                 String codeB = codes[1];
                 int low = Integer.parseInt(codeA);
                 int high = Integer.parseInt(codeB);
-                if (high >= low && low >= 0 && high < Constants.prizeCodeMax){
+                if (high >= low && low >= 0 && high < Constants.prizeCodeMax) {
                     LotteryPrizeInfo lotteryPrizeInfo = new LotteryPrizeInfo();
                     lotteryPrizeInfo.setId(prize.getId());
                     lotteryPrizeInfo.setTitle(prize.getTitle());
@@ -305,38 +345,51 @@ public class LotteryController1 {
         }
         return lotteryPrizeInfoList;
     }
+    public ArrayList<Prize> getAllUsefulPrizeListWithCache(Date now) throws ParseException {
+        ArrayList<Prize> prizeList = getAllPrizeListWithCache();
+        ArrayList<Prize> usefulPrizeList = new ArrayList<Prize>();
+        for (Prize prize : prizeList) {
+            if (prize.getId() > 0 && prize.getSysStatus() == 1 && prize.getPrizeNum() > 0 &&
+                    prize.getPrizeBegin().before(now) && prize.getEndTime().after(now)) {
+                usefulPrizeList.add(prize);
+            }
+        }
+        return usefulPrizeList;
+    }
+    public ArrayList<Prize> getAllPrizeListWithCache() throws ParseException {
+        ArrayList<Prize> prizeList = cacheMgr.getAllPrizesByCache();
+        if (prizeList == null || prizeList.isEmpty()) {
+            // 缓存没查到，从db获取
+            prizeList = prizeMapper.getAll();
+            // 从db获取到数据
+            cacheMgr.setAllPrizesByCache(prizeList);
+        }
+        return prizeList;
+    }
 
     // 6. 剩余奖品发放
-    public boolean giveOutPrize(Long prizeId) {
-        // TODO 这个应该需要加锁把
+    public boolean giveOutPrizeWithCache(Long prizeId) {
         int ret = prizeMapper.decrLeftNum(prizeId,1);
         if (ret <= 0){
             return false;
         }
+        cacheMgr.updatePrizeByCache(prizeId);
         return true;
     }
 
     // 7. 发放优惠券
-    @Resource
-    private CouponMapper couponMapper;
-    public String prizeCodeDiff(Long prizeId) {
-        String key =  String.format("%d",-prizeId - Constants.couponDiffLockLimit);
-        RLock lock = redissonClient.getLock(key);
-        Long couponID = 0L;
-        lock.lock();
-        Coupon coupon = couponMapper.getGetNextUsefulCoupon(prizeId,couponID);
-        if(coupon == null) {
-            lock.unlock();
+    // 带缓存的优惠券发奖，从缓存中拿出一个优惠券,要用缓存的话，需要项目启动的时候将优惠券导入到缓存
+    public String prizeCodeDiffWithCache(Long prizeId) {
+        String code = cacheMgr.getNextUsefulCouponByCache(prizeId);
+        if (code.isEmpty()) {
             return "";
         }
-        couponMapper.updateByCode(coupon.getCode());
-        lock.unlock();
-        return coupon.getCode();
+        // 缓存中能够取到优惠券，在去更改db
+        couponMapper.updateByCode(code);
+        return code;
     }
 
     // 8.记录中奖记录
-    @Resource
-    private ResultMapper resultMapper;
     public void logLotteryResult(LotteryPrizeInfo prize,Date now,Long userId,String ip,String userName,int prizeCode) {
         Result result = new Result();
         result.setPrizeId(prize.getId());
@@ -352,7 +405,7 @@ public class LotteryController1 {
         resultMapper.save(result);
     }
 
-
+    // 9. 大奖黑名单处理
     public void prizeLargeBlackLimit(Date now,BlackUser blackUser,BlackIp blackIp,LotteryUserInfo lotteryUserInfo){
         Calendar calendar = Calendar.getInstance(); // 当前时间
         calendar.setTime(now);
@@ -383,8 +436,6 @@ public class LotteryController1 {
             blackIpMapper.updateBlackTimeByIP(lotteryUserInfo.getIp(),blackTime);
         }
     }
-
-
 
 
 
