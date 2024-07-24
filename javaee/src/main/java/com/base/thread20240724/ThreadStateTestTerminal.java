@@ -9,5 +9,8 @@ public class ThreadStateTestTerminal {
         thread.start();
         thread.join(); // 等待线程结束
         System.out.println(thread.getState()); // TERMINATED
+
+
+
     }
 }
