@@ -6,10 +6,11 @@ public class ThreadStateTestTerminal {
             // 线程任务
         });
 
+
+
         thread.start();
         thread.join(); // 等待线程结束
         System.out.println(thread.getState()); // TERMINATED
-
 
 
     }
